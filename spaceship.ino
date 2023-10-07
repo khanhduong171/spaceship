@@ -44,13 +44,15 @@ uint8_t hours = 0;
 uint8_t seconds = 0;
 
 
-boolean blinkColon;
+bool blinkColon;
 uint8_t position;
 
 // Timmer
 unsigned long previousClock = 0;
 const long interval3600 = 3600;
 const long interval1000 = 1000;
+const long interval1m = 10000;
+const long interval300 = 300;
 const long interval500 = 500;
 
 unsigned long previousMillis = 0;
@@ -62,9 +64,16 @@ PubSubClient client(espClient);
 // Define NTP Client to get time
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP);
+// Touch pin
+const int touchPin = T6;
+bool touchDetected = true;
+bool touchToggle = false;
 
 void setup(void) {
   Serial.begin(9600);
+  // init touch pin
+  touchAttachInterrupt(touchPin, touchCallback, 40);
+
   tft.init(WIDTH, HEIGHT, SPI_MODE2);  // Init ST7789 display 240x240 pixel
 
   tft.setRotation(2);
@@ -81,7 +90,8 @@ void setup(void) {
   wifiStatus = ssid;
   Serial.println("Connected to WiFi");
   drawHeader("Connected to WiFi");
-
+  delay(3000);
+  tft.fillScreen(ST77XX_BLACK);
   // Connect MQTT Broker
   client.setServer(mqttServer, mqttPort);
   client.setCallback(callback);
@@ -92,7 +102,12 @@ void setup(void) {
   initDrawClock();
 }
 
-void setTime() {
+void touchCallback() {
+  if (touchDetected) {
+    drawHeaderRight();
+    touchDetected = false;
+    Serial.println("Cảm ứng đã được nhận!");
+  }
 }
 void callback(char *topic, byte *payload, unsigned int length) {
   // Xử lý dữ liệu nhận được từ MQTT
@@ -127,7 +142,7 @@ void callback(char *topic, byte *payload, unsigned int length) {
   } else {
     // TODO:
   }
-
+  drawBattery();
   if (weatherImage != nullptr && oldWeather != newWeather) {
     drawWeather(newWeather);
     tft.drawRGBBitmap(180, 30, weatherImage, 48, 48);
@@ -159,12 +174,13 @@ void loop() {
   // Clock
   if (currentMillis - previousClock >= interval1000) {
     previousClock = currentMillis;
+    touchDetected = true;
     drawClock();
   }
-  // Update time after 1h
-  // if (currentMillis - previousClock >= interval3600) {
+  // Update touch
+  // if (currentMillis - previousClock >= interval300) {
   //   previousClock = currentMillis;
-  //   drawClock();
+    
   // }
   if (!client.connected()) {
     reconnect();
@@ -210,9 +226,9 @@ void updateClock() {
   breakTime(epochTime, tm);
   const char *monthNames[] = { "", "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC" };
 
-  sprintf(dateStr, "%s, %02d %s %04d", dayShortStr(tm.Wday), tm.Day, monthNames[tm.Month], tmYearToCalendar(tm.Year));
+  sprintf(dateStr, "%s %02d %s %04d", dayShortStr(tm.Wday), tm.Day, monthNames[tm.Month], tmYearToCalendar(tm.Year));
   // After get clock, re-draw date
-  drawHeader(String(dateStr));
+  drawDate(String(dateStr));
 }
 // DRAW
 void drawLayout() {
@@ -224,10 +240,34 @@ void drawLayout() {
   tft.drawLine(0, 110, WIDTH, 110, colorLine);
   tft.drawLine(0, 210, WIDTH, 210, colorLine);
 }
+
 void drawHeader(String str) {
-  tft.fillRect(1, 1, 238, 19, ST77XX_BLACK);
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setCursor(5, 100);
   tft.setTextSize(1);
+  tft.setTextColor(ST77XX_BLUE);
+  tft.setFont(&FreeMono9pt7b);
+  tft.print(str);
+  str.clear();
+}
+
+void drawHeaderRight() {
+  touchToggle = !touchToggle;
+  if (touchToggle) {
+    tft.setTextColor(ST77XX_GREEN);
+    tft.setFont();
+    tft.setCursor(205, 5);
+    tft.setTextSize(1);
+    tft.print(".oO");
+  } else {
+    tft.fillRect(171, 1, 68, 19, ST77XX_BLACK);
+  }
+}
+
+void drawDate(String str) {
+  tft.fillRect(1, 1, 170, 19, ST77XX_BLACK);
   tft.setCursor(5, 15);
+  tft.setTextSize(1);
   tft.setTextColor(ST77XX_BLUE);
   tft.setFont(&FreeMono9pt7b);
   tft.print(str);
@@ -235,11 +275,13 @@ void drawHeader(String str) {
 }
 void drawClock() {
   blinkColon = !blinkColon;
-  tft.setFont();
+  // tft.setFont();
+  tft.setFont(&FreeMono9pt7b);
   tft.setTextSize(1);
   tft.setTextColor(ST77XX_RED);
-  tft.fillRect(146, 56, 24, 24, ST77XX_BLACK);  // clear seconds
-  tft.setCursor(150, 59);
+  tft.fillRect(146, 45, 24, 24, ST77XX_BLACK);  // clear seconds
+  // tft.setCursor(150, 59);
+  tft.setCursor(147, 64);
   tft.print(formatNumber(seconds));
 
   if (blinkColon) {
@@ -322,8 +364,10 @@ void drawFooter() {
   strFooter.clear();
 }
 void clearScreen() {
-  // fill header
-  tft.fillRect(1, 1, 238, 19, ST77XX_BLACK);
+  // fill header left
+  tft.fillRect(1, 1, 170, 19, ST77XX_BLACK);
+  // fill header right
+  tft.fillRect(171, 1, 68, 19, ST77XX_BLACK);
   // fill all time
   tft.fillRect(1, 21, 169, 59, ST77XX_BLACK);
   // fill hours
@@ -344,6 +388,15 @@ void clearScreen() {
   // fill footer
   tft.fillRect(1, 211, 238, 28, ST77XX_BLACK);
 }
+
+void drawBattery() {
+  float voltage = analogRead(A0) / 4095.0 * 3.3;
+
+  Serial.print("Điện áp: ");
+  Serial.print(voltage, 2);  // Hiển thị 2 chữ số sau dấu thập phân
+  Serial.println(" V");
+}
+
 void drawMessage() {
   tft.drawRect(0, 160, 199, 179, ST77XX_BLACK);
   tft.setCursor(0, 160);
@@ -352,6 +405,8 @@ void drawMessage() {
   tft.setTextWrap(true);
   tft.print(wifiStatus);
 }
+
+
 void drawface() {
 
 
