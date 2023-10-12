@@ -17,7 +17,17 @@
 #define TFT_DC 2
 #define TFT_RST 4
 #define TFT_CS 15
-#define CUSTOM_LINE 0x630C
+#define COLOR_LINE 0x630C
+#define COLOR_HEADER_R 0xec43
+#define COLOR_HEADER_L 0xec43
+#define COLOR_CLOCK 0xec43
+#define COLOR_WEATHER 0xec43
+#define COLOR_TEMP 0xec43
+#define COLOR_DEVICE 0xf800
+#define COLOR_STATE 0x201f
+#define COLOR_FOOTER 0xF81F
+
+
 #include "rainy.h"
 #include "cloudy.h"
 #include "sunny.h"
@@ -26,6 +36,7 @@
 Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
 WiFiClient espClient;
+
 
 String wifiStatus = "";
 const uint8_t HEIGHT = 240;
@@ -37,6 +48,8 @@ int humidityExternal;
 int power;
 String weather;
 String oldWeather;
+String device;
+String state;
 char dateStr[20];
 
 uint8_t minutes = 0;
@@ -49,11 +62,10 @@ uint8_t position;
 
 // Timmer
 unsigned long previousClock = 0;
-const long interval3600 = 3600;
-const long interval1000 = 1000;
-const long interval1m = 10000;
-const long interval300 = 300;
-const long interval500 = 500;
+const long intervalClock = 1000;
+// For dot
+unsigned long previousColon = 0;
+const long intervalColon = 500;
 
 unsigned long previousMillis = 0;
 const long intervalFooter = 400;
@@ -122,6 +134,13 @@ void callback(char *topic, byte *payload, unsigned int length) {
   temperatureExternal = doc["tem"].as<int>();
   humidityExternal = doc["hum"].as<int>();
   power = doc["power"].as<int>();
+  device = doc["device"].as<String>();
+  state = doc["state"].as<String>();
+
+  if (device != nullptr && !device.isEmpty() && device != "null") {
+    drawMessage();
+  }
+
   drawTemHum();
   drawFooter();
   // process for weather
@@ -166,27 +185,22 @@ void reconnect() {
 }
 void loop() {
   unsigned long currentMillis = millis();
-  // Footer
-  // if (currentMillis - previousMillis >= intervalFooter) {
-  //   previousMillis = currentMillis;
-  //   drawMqttFooter();
-  // }
   // Clock
-  if (currentMillis - previousClock >= interval1000) {
+  if (currentMillis - previousClock >= intervalClock) {
     previousClock = currentMillis;
     touchDetected = true;
     drawClock();
   }
-  // Update touch
-  // if (currentMillis - previousClock >= interval300) {
-  //   previousClock = currentMillis;
-    
-  // }
+  // Update colon
+  if (currentMillis - previousColon >= intervalColon) {
+    previousColon = currentMillis;
+    drawColon();
+  }
   if (!client.connected()) {
     reconnect();
   }
   client.loop();
-  delay(1000);
+  // delay(1000);
 }
 
 String formatNumber(int num) {
@@ -204,7 +218,7 @@ void initDrawClock() {
 
   tft.setFont(&FreeMonoBold24pt7b);
   tft.setTextSize(1);
-  tft.setTextColor(ST77XX_RED);
+  tft.setTextColor(COLOR_CLOCK);
   tft.fillRect(1, 21, 169, 59, ST77XX_BLACK);
   tft.setCursor(8, 64);
   tft.print(formatNumber(hours));
@@ -232,7 +246,7 @@ void updateClock() {
 }
 // DRAW
 void drawLayout() {
-  uint16_t colorLine = CUSTOM_LINE;
+  uint16_t colorLine = COLOR_LINE;
   tft.drawRect(0, 0, 240, 240, colorLine);
   tft.drawLine(0, 20, WIDTH, 20, colorLine);
   tft.drawLine(170, 20, 170, 110, colorLine);
@@ -245,7 +259,7 @@ void drawHeader(String str) {
   tft.fillScreen(ST77XX_BLACK);
   tft.setCursor(5, 100);
   tft.setTextSize(1);
-  tft.setTextColor(ST77XX_BLUE);
+  tft.setTextColor(COLOR_HEADER_L);
   tft.setFont(&FreeMono9pt7b);
   tft.print(str);
   str.clear();
@@ -254,7 +268,7 @@ void drawHeader(String str) {
 void drawHeaderRight() {
   touchToggle = !touchToggle;
   if (touchToggle) {
-    tft.setTextColor(ST77XX_GREEN);
+    tft.setTextColor(COLOR_HEADER_R);
     tft.setFont();
     tft.setCursor(205, 5);
     tft.setTextSize(1);
@@ -268,28 +282,29 @@ void drawDate(String str) {
   tft.fillRect(1, 1, 170, 19, ST77XX_BLACK);
   tft.setCursor(5, 15);
   tft.setTextSize(1);
-  tft.setTextColor(ST77XX_BLUE);
+  tft.setTextColor(COLOR_HEADER_L);
   tft.setFont(&FreeMono9pt7b);
   tft.print(str);
   str.clear();
 }
-void drawClock() {
+void drawColon() {
   blinkColon = !blinkColon;
-  // tft.setFont();
-  tft.setFont(&FreeMono9pt7b);
-  tft.setTextSize(1);
-  tft.setTextColor(ST77XX_RED);
-  tft.fillRect(146, 45, 24, 24, ST77XX_BLACK);  // clear seconds
-  // tft.setCursor(150, 59);
-  tft.setCursor(147, 64);
-  tft.print(formatNumber(seconds));
-
-  if (blinkColon) {
-    tft.setTextColor(ST77XX_BLACK);
-  }
   tft.setFont(&FreeMonoBold24pt7b);
   tft.setCursor(63, 60);
+  if (blinkColon) {
+    tft.setTextColor(ST77XX_BLACK);
+  } else {
+    tft.setTextColor(COLOR_CLOCK);
+  }
   tft.print(":");
+}
+void drawClock() {
+  tft.setFont(&FreeMono9pt7b);
+  tft.setTextSize(1);
+  tft.setTextColor(COLOR_CLOCK);
+  tft.fillRect(146, 45, 24, 24, ST77XX_BLACK);  // clear seconds
+  tft.setCursor(147, 64);
+  tft.print(formatNumber(seconds));
 
   if (seconds >= 60) {
     seconds = 0;
@@ -303,7 +318,7 @@ void drawClock() {
       tft.setCursor(8, 64);
       tft.fillRect(8, 21, 55, 59, ST77XX_BLACK);  // clear hours
       tft.setFont(&FreeMonoBold24pt7b);
-      tft.setTextColor(ST77XX_RED);
+      tft.setTextColor(COLOR_CLOCK);
       tft.print(formatNumber(hours));
       // Update clock after 1 hours
       updateClock();
@@ -311,7 +326,7 @@ void drawClock() {
     tft.setCursor(91, 64);
     tft.fillRect(91, 21, 55, 59, ST77XX_BLACK);  // clear minutes
     tft.setFont(&FreeMonoBold24pt7b);
-    tft.setTextColor(ST77XX_RED);
+    tft.setTextColor(COLOR_CLOCK);
     tft.print(formatNumber(minutes));
   }
   seconds++;
@@ -323,7 +338,7 @@ void drawClock() {
 void drawTemHum() {
   tft.fillRect(1, 81, 169, 29, ST77XX_BLACK);
   tft.setFont();
-  tft.setTextColor(ST77XX_WHITE);
+  tft.setTextColor(COLOR_TEMP);
   tft.setTextSize(2);
   tft.setCursor(5, 88);
   tft.print(temperatureExternal);
@@ -341,10 +356,34 @@ void drawWeather(String status) {
   tft.fillRect(171, 21, 68, 89, ST77XX_BLACK);
   tft.setFont();
   tft.setCursor(185, 95);
-  tft.setTextColor(ST77XX_WHITE);
+  tft.setTextColor(COLOR_WEATHER);
   tft.setTextSize(1);
   tft.print(status);
 }
+
+void drawMessage() {
+  tft.setTextWrap(true);
+  tft.fillRect(1, 111, 238, 99, ST77XX_BLACK);
+  tft.setTextSize(1);
+  tft.setFont(&FreeMono9pt7b);
+  // Print time
+  tft.setCursor(80, 135);
+  tft.setTextColor(ST77XX_GREEN);
+  char timeTmp[8];
+  sprintf(timeTmp, "%s:%s:%s", formatNumber(hours), formatNumber(minutes), formatNumber(seconds));
+  tft.print(timeTmp);
+  // Print device
+  tft.setCursor((WIDTH - device.length() * 10) / 2, 160);
+  tft.setTextColor(COLOR_DEVICE);
+  tft.print(device);
+  // Print state
+  tft.setCursor((WIDTH - state.length() * 10) / 2, 185);
+  tft.setTextColor(COLOR_STATE);
+  tft.print(state);
+  device.clear();
+  state.clear();
+}
+
 
 void drawFooter() {
   // uint8_t lenF = footer.length();
@@ -355,10 +394,10 @@ void drawFooter() {
   // position++;
   // Clear border => 239, keep border 238
   tft.fillRect(1, 211, 238, 28, ST77XX_BLACK);
-  tft.setFont(&FreeMonoOblique9pt7b);
+  tft.setFont(&FreeMono9pt7b);
   tft.setTextSize(1);
   tft.setCursor(5, 230);
-  tft.setTextColor(ST77XX_GREEN);
+  tft.setTextColor(COLOR_FOOTER);
   String strFooter = "Power: " + String(power) + "W";
   tft.print(strFooter);
   strFooter.clear();
@@ -397,14 +436,6 @@ void drawBattery() {
   Serial.println(" V");
 }
 
-void drawMessage() {
-  tft.drawRect(0, 160, 199, 179, ST77XX_BLACK);
-  tft.setCursor(0, 160);
-  tft.setTextSize(1);
-  tft.setTextColor(ST77XX_RED);
-  tft.setTextWrap(true);
-  tft.print(wifiStatus);
-}
 
 
 void drawface() {
