@@ -18,7 +18,7 @@
 #define TFT_RST 4
 #define TFT_CS 15
 #define COLOR_LINE 0x630C
-#define COLOR_HEADER_R 0xec43
+#define COLOR_HEADER_R 0x07E0
 #define COLOR_HEADER_L 0xec43
 #define COLOR_CLOCK 0xec43
 #define COLOR_WEATHER 0xec43
@@ -26,7 +26,6 @@
 #define COLOR_DEVICE 0xf800
 #define COLOR_STATE 0x201f
 #define COLOR_FOOTER 0xF81F
-
 
 #include "rainy.h"
 #include "cloudy.h"
@@ -37,8 +36,6 @@ Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
 WiFiClient espClient;
 
-
-String wifiStatus = "";
 const uint8_t HEIGHT = 240;
 const uint8_t WIDTH = 240;
 /* Global variable */
@@ -56,22 +53,24 @@ uint8_t minutes = 0;
 uint8_t hours = 0;
 uint8_t seconds = 0;
 
-
 bool blinkColon;
-uint8_t position;
+uint8_t position = 0;
+bool isWifiConnected;
 
-// Timmer
+unsigned long previousStatus = 0;
+const long intervalStatus = 200;
+// For timer (seconds)
 unsigned long previousClock = 0;
 const long intervalClock = 1000;
-// For dot
+// For colon
 unsigned long previousColon = 0;
 const long intervalColon = 500;
-
-unsigned long previousMillis = 0;
-const long intervalFooter = 400;
+// For wifi check connection
+unsigned long previousWifi = 0;
+const long intervalWifi = 30000;
 /* Global variable */
 // MQTT Object
-PubSubClient client(espClient);
+PubSubClient mqttClient(espClient);
 
 // Define NTP Client to get time
 WiFiUDP ntpUDP;
@@ -90,28 +89,24 @@ void setup(void) {
 
   tft.setRotation(2);
   tft.fillScreen(ST77XX_BLACK);
-
-  // Connect Wi-Fi
-  drawHeader(ssid);
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    drawHeader("Connecting to WiFi...");
-    Serial.println("Connecting to WiFi...");
-  }
-  wifiStatus = ssid;
-  Serial.println("Connected to WiFi");
-  drawHeader("Connected to WiFi");
-  delay(3000);
-  tft.fillScreen(ST77XX_BLACK);
-  // Connect MQTT Broker
-  client.setServer(mqttServer, mqttPort);
-  client.setCallback(callback);
-  Serial.println("MQTT connected");
-  timeClient.begin();
-  delay(1000);
   drawLayout();
-  initDrawClock();
+  drawConnectStatus();
+  // Init wifi
+  WiFi.begin(ssid, password);
+  previousWifi = millis();
+  delay(3000);
+  isWifiConnected = false;
+  // Check wifi status
+  if (WiFi.status() == WL_CONNECTED) {
+    isWifiConnected = true;
+    // Init mqtt connection
+    mqttClient.setServer(mqttServer, mqttPort);
+    mqttClient.setCallback(callback);
+    // Init clock from internet
+    timeClient.begin();
+    // Init clock to screen
+    initClock();
+  }
 }
 
 void touchCallback() {
@@ -170,19 +165,34 @@ void callback(char *topic, byte *payload, unsigned int length) {
   newWeather.clear();
 }
 
-void reconnect() {
-  while (!client.connected()) {
-    Serial.println("Attempting MQTT connection...");
-    if (client.connect("SpaceshipDevice", mqttUser, mqttPassword)) {
+void reconnectMqtt() {
+  if (!mqttClient.connected()) {
+    Serial.println("MQTT connection starting");
+    if (mqttClient.connect(mqttDevice, mqttUser, mqttPassword)) {
       Serial.println("Connected to MQTT Broker");
-      client.subscribe(mqttTopic);
+      mqttClient.subscribe(mqttTopic);
     } else {
-      Serial.print("Failed to connect to MQTT Broker, rc=");
-      Serial.print(client.state());
-      delay(5000);
+      Serial.print("Can't connect to MQTT Broker, MQTT state: ");
+      Serial.println(mqttClient.state());
     }
   }
 }
+
+bool reconnectWifi() {
+  if (WiFi.status() == WL_CONNECTED) {
+    return true;
+  }
+  WiFi.reconnect();
+  delay(1000);
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("Wifi connected");
+    return true;
+  } else {
+    Serial.println("Can't connect to wifi");
+    return false;
+  }
+}
+
 void loop() {
   unsigned long currentMillis = millis();
   // Clock
@@ -196,11 +206,21 @@ void loop() {
     previousColon = currentMillis;
     drawColon();
   }
-  if (!client.connected()) {
-    reconnect();
+  // Check wifi connection
+  if (currentMillis - previousWifi >= intervalWifi) {
+    previousWifi = currentMillis;
+    isWifiConnected = reconnectWifi();
+    if (isWifiConnected) {
+      reconnectMqtt();
+      updateClock();
+    }
   }
-  client.loop();
-  // delay(1000);
+  // Update wifi status to screen
+  if (currentMillis - previousStatus >= intervalStatus) {
+    previousStatus = currentMillis;
+    drawConnectStatus();
+  }
+  mqttClient.loop();
 }
 
 String formatNumber(int num) {
@@ -213,7 +233,7 @@ String formatNumber(int num) {
   return String(num);
 }
 
-void initDrawClock() {
+void initClock() {
   updateClock();
 
   tft.setFont(&FreeMonoBold24pt7b);
@@ -255,6 +275,25 @@ void drawLayout() {
   tft.drawLine(0, 210, WIDTH, 210, colorLine);
 }
 
+void drawConnectStatus() {
+  tft.setFont();
+  tft.setTextSize(1);
+  tft.setTextColor(COLOR_HEADER_R);
+
+  if (isWifiConnected) {
+    tft.setCursor(200, 6);
+    tft.print("ooooo");
+  } else {
+    tft.fillRect(171, 1, 68, 19, ST77XX_BLACK);
+    position = position + 6;
+    if (position > 29) {
+      position = 0;
+    }
+    tft.setCursor(200 + position, 6);
+    tft.print("o");
+  }
+}
+
 void drawHeader(String str) {
   tft.fillScreen(ST77XX_BLACK);
   tft.setCursor(5, 100);
@@ -280,7 +319,7 @@ void drawHeaderRight() {
 
 void drawDate(String str) {
   tft.fillRect(1, 1, 170, 19, ST77XX_BLACK);
-  tft.setCursor(5, 15);
+  tft.setCursor(5, 9);
   tft.setTextSize(1);
   tft.setTextColor(COLOR_HEADER_L);
   tft.setFont(&FreeMono9pt7b);
@@ -384,7 +423,6 @@ void drawMessage() {
   state.clear();
 }
 
-
 void drawFooter() {
   // uint8_t lenF = footer.length();
   // if (position >= lenF) {
@@ -436,10 +474,7 @@ void drawBattery() {
   Serial.println(" V");
 }
 
-
-
 void drawface() {
-
 
   // Draw text
   // const char *text_day = "Mon, 25 SEP 2023";
