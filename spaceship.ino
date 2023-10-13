@@ -54,7 +54,8 @@ uint8_t hours = 0;
 uint8_t seconds = 0;
 
 bool blinkColon;
-uint8_t position = 0;
+int8_t position = 0;
+int8_t step = 6;
 bool isWifiConnected;
 
 unsigned long previousStatus = 0;
@@ -67,7 +68,7 @@ unsigned long previousColon = 0;
 const long intervalColon = 500;
 // For wifi check connection
 unsigned long previousWifi = 0;
-const long intervalWifi = 30000;
+const long intervalWifi = 5000;
 /* Global variable */
 // MQTT Object
 PubSubClient mqttClient(espClient);
@@ -180,17 +181,20 @@ void reconnectMqtt() {
 
 bool reconnectWifi() {
   if (WiFi.status() == WL_CONNECTED) {
-    return true;
-  }
-  WiFi.reconnect();
-  delay(1000);
-  if (WiFi.status() == WL_CONNECTED) {
     Serial.println("Wifi connected");
     return true;
-  } else {
-    Serial.println("Can't connect to wifi");
-    return false;
   }
+  Serial.println("Can't connect to wifi");
+  return false;
+  // WiFi.reconnect();
+  // delay(1000);
+  // if (WiFi.status() == WL_CONNECTED) {
+  //   Serial.println("Wifi connected");
+  //   return true;
+  // } else {
+  //   Serial.println("Can't connect to wifi");
+  //   return false;
+  // }
 }
 
 void loop() {
@@ -199,7 +203,7 @@ void loop() {
   if (currentMillis - previousClock >= intervalClock) {
     previousClock = currentMillis;
     touchDetected = true;
-    drawClock();
+    drawClock(false);
   }
   // Update colon
   if (currentMillis - previousColon >= intervalColon) {
@@ -263,6 +267,7 @@ void updateClock() {
   sprintf(dateStr, "%s %02d %s %04d", dayShortStr(tm.Wday), tm.Day, monthNames[tm.Month], tmYearToCalendar(tm.Year));
   // After get clock, re-draw date
   drawDate(String(dateStr));
+  drawClock(true);
 }
 // DRAW
 void drawLayout() {
@@ -285,10 +290,15 @@ void drawConnectStatus() {
     tft.print("ooooo");
   } else {
     tft.fillRect(171, 1, 68, 19, ST77XX_BLACK);
-    position = position + 6;
+    position += step;
     if (position > 29) {
-      position = 0;
+      step = -6;
     }
+    if (position < 0) {
+      step = 6;
+    }
+    Serial.print(position);
+    Serial.print(".");
     tft.setCursor(200 + position, 6);
     tft.print("o");
   }
@@ -337,13 +347,27 @@ void drawColon() {
   }
   tft.print(":");
 }
-void drawClock() {
+void drawClock(bool isWriteAll) {
   tft.setFont(&FreeMono9pt7b);
   tft.setTextSize(1);
   tft.setTextColor(COLOR_CLOCK);
   tft.fillRect(146, 45, 24, 24, ST77XX_BLACK);  // clear seconds
   tft.setCursor(147, 64);
   tft.print(formatNumber(seconds));
+
+  if (isWriteAll) {
+    tft.setCursor(8, 64);
+    tft.fillRect(8, 21, 55, 59, ST77XX_BLACK);  // clear hours
+    tft.setFont(&FreeMonoBold24pt7b);
+    tft.setTextColor(COLOR_CLOCK);
+    tft.print(formatNumber(hours));
+
+    tft.setCursor(91, 64);
+    tft.fillRect(91, 21, 55, 59, ST77XX_BLACK);  // clear minutes
+    tft.setFont(&FreeMonoBold24pt7b);
+    tft.setTextColor(COLOR_CLOCK);
+    tft.print(formatNumber(minutes));
+  }
 
   if (seconds >= 60) {
     seconds = 0;
