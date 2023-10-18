@@ -6,13 +6,8 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <TimeLib.h>
-#include <Fonts/FreeSansBoldOblique9pt7b.h>;
-#include <Fonts/FreeMono9pt7b.h>;
-#include <Fonts/FreeSansBold12pt7b.h>;
-#include <Fonts/FreeSerif9pt7b.h>;
-#include <Fonts/FreeMonoBold12pt7b.h>;
-#include <Fonts/FreeMonoBold24pt7b.h>;
-#include <Fonts/FreeMonoOblique9pt7b.h>;
+#include <Fonts/FreeMono9pt7b.h>  // Thêm thư viện font
+#include <Fonts/FreeMonoBold24pt7b.h>
 // ST7789 TFT module connections
 #define TFT_DC 2
 #define TFT_RST 4
@@ -32,13 +27,14 @@
 #include "sunny.h"
 #include "lightning.h"
 #include "private.h"
+
 Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
 WiFiClient espClient;
 
 const uint8_t HEIGHT = 240;
 const uint8_t WIDTH = 240;
-/* Global variable */
+
 // MQTT variable
 int temperatureExternal;
 int humidityExternal;
@@ -57,54 +53,68 @@ bool blinkColon;
 int8_t position = 0;
 int8_t step = 6;
 bool isWifiConnected;
+bool isMqttConnected;
 
 unsigned long previousStatus = 0;
 const long intervalStatus = 200;
+
 // For timer (seconds)
 unsigned long previousClock = 0;
 const long intervalClock = 1000;
+
 // For colon
 unsigned long previousColon = 0;
 const long intervalColon = 500;
+
 // For wifi check connection
 unsigned long previousWifi = 0;
 const long intervalWifi = 5000;
-/* Global variable */
+
 // MQTT Object
 PubSubClient mqttClient(espClient);
 
 // Define NTP Client to get time
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP);
+
 // Touch pin
 const int touchPin = T6;
 bool touchDetected = true;
 bool touchToggle = false;
-
+// Led anten
+const int ledPin = 16;
 void setup(void) {
   Serial.begin(9600);
   // init touch pin
   touchAttachInterrupt(touchPin, touchCallback, 40);
 
-  tft.init(WIDTH, HEIGHT, SPI_MODE2);  // Init ST7789 display 240x240 pixel
+  pinMode(ledPin, OUTPUT);
 
+  tft.init(WIDTH, HEIGHT, SPI_MODE2);  // Init ST7789 display 240x240 pixel
   tft.setRotation(2);
+  tft.setCursor(1, 1);
   tft.fillScreen(ST77XX_BLACK);
   drawLayout();
   drawConnectStatus();
+
   // Init wifi
   WiFi.begin(ssid, password);
   previousWifi = millis();
   delay(3000);
   isWifiConnected = false;
+
   // Check wifi status
   if (WiFi.status() == WL_CONNECTED) {
     isWifiConnected = true;
+
     // Init mqtt connection
     mqttClient.setServer(mqttServer, mqttPort);
     mqttClient.setCallback(callback);
+
     // Init clock from internet
     timeClient.begin();
+    timeClient.setTimeOffset(25200);  // Adjust this offset as needed
+
     // Init clock to screen
     initClock();
   }
@@ -117,14 +127,17 @@ void touchCallback() {
     Serial.println("Cảm ứng đã được nhận!");
   }
 }
+
 void callback(char *topic, byte *payload, unsigned int length) {
+  // Message arrived, turn on led
+  digitalWrite(ledPin, HIGH);
   // Xử lý dữ liệu nhận được từ MQTT
   Serial.print("Message arrived on topic: ");
   Serial.println(topic);
-  Serial.print("Payload: ");
 
   DynamicJsonDocument doc(256);  // Kích thước đối tượng JSON
   deserializeJson(doc, payload, length);
+
   // process data here
   weather = doc["weather"].as<String>();
   temperatureExternal = doc["tem"].as<int>();
@@ -139,9 +152,11 @@ void callback(char *topic, byte *payload, unsigned int length) {
 
   drawTemHum();
   drawFooter();
+
   // process for weather
   const uint16_t *weatherImage = nullptr;
   String newWeather;
+
   if (weather == "rainy" || weather == "lightning-rainy") {
     newWeather = "Rainy";
     weatherImage = (const uint16_t *)rainy;
@@ -157,24 +172,31 @@ void callback(char *topic, byte *payload, unsigned int length) {
   } else {
     // TODO:
   }
+
   drawBattery();
+
   if (weatherImage != nullptr && oldWeather != newWeather) {
     drawWeather(newWeather);
     tft.drawRGBBitmap(180, 30, weatherImage, 48, 48);
     oldWeather = newWeather;
   }
+
   newWeather.clear();
+  digitalWrite(ledPin, LOW);
 }
 
 void reconnectMqtt() {
   if (!mqttClient.connected()) {
+    isMqttConnected = false;
     Serial.println("MQTT connection starting");
     if (mqttClient.connect(mqttDevice, mqttUser, mqttPassword)) {
       Serial.println("Connected to MQTT Broker");
       mqttClient.subscribe(mqttTopic);
+      isMqttConnected = true;
     } else {
       Serial.print("Can't connect to MQTT Broker, MQTT state: ");
       Serial.println(mqttClient.state());
+      isMqttConnected = false;
     }
   }
 }
@@ -184,46 +206,44 @@ bool reconnectWifi() {
     Serial.println("Wifi connected");
     return true;
   }
+
   Serial.println("Can't connect to wifi");
   return false;
-  // WiFi.reconnect();
-  // delay(1000);
-  // if (WiFi.status() == WL_CONNECTED) {
-  //   Serial.println("Wifi connected");
-  //   return true;
-  // } else {
-  //   Serial.println("Can't connect to wifi");
-  //   return false;
-  // }
 }
 
 void loop() {
   unsigned long currentMillis = millis();
+
   // Clock
   if (currentMillis - previousClock >= intervalClock) {
     previousClock = currentMillis;
     touchDetected = true;
     drawClock(false);
   }
+
   // Update colon
   if (currentMillis - previousColon >= intervalColon) {
     previousColon = currentMillis;
     drawColon();
   }
+
   // Check wifi connection
   if (currentMillis - previousWifi >= intervalWifi) {
     previousWifi = currentMillis;
     isWifiConnected = reconnectWifi();
+
     if (isWifiConnected) {
       reconnectMqtt();
       updateClock();
     }
   }
+
   // Update wifi status to screen
   if (currentMillis - previousStatus >= intervalStatus) {
     previousStatus = currentMillis;
     drawConnectStatus();
   }
+
   mqttClient.loop();
 }
 
@@ -254,7 +274,6 @@ void initClock() {
 void updateClock() {
   timeClient.update();
   timeClient.setTimeOffset(25200);
-
   seconds = timeClient.getSeconds();
   minutes = timeClient.getMinutes();
   hours = timeClient.getHours();
@@ -283,23 +302,35 @@ void drawLayout() {
 void drawConnectStatus() {
   tft.setFont();
   tft.setTextSize(1);
-  tft.setTextColor(COLOR_HEADER_R);
-
   if (isWifiConnected) {
-    tft.setCursor(200, 6);
+    tft.setTextColor(COLOR_HEADER_R);
+    tft.setCursor(200, 3);
     tft.print("ooooo");
-  } else {
-    tft.fillRect(171, 1, 68, 19, ST77XX_BLACK);
-    position += step;
-    if (position > 29) {
-      step = -6;
-    }
-    if (position < 0) {
-      step = 6;
-    }
-    Serial.print(position);
-    Serial.print(".");
-    tft.setCursor(200 + position, 6);
+  }
+  if (isMqttConnected) {
+    tft.setTextColor(ST77XX_MAGENTA);
+    tft.setCursor(200, 9);
+    tft.print("ooooo");
+  }
+
+  position += step;
+  if (position > 29) {
+    step = -6;
+  }
+  if (position < 0) {
+    step = 6;
+  }
+  if (!isWifiConnected) {
+    isMqttConnected = false;
+    tft.fillRect(171, 1, 68, 10, ST77XX_BLACK);
+    tft.setTextColor(COLOR_HEADER_R);
+    tft.setCursor(200 + position, 3);
+    tft.print("o");
+  }
+  if (!isMqttConnected) {
+    tft.fillRect(171, 10, 68, 10, ST77XX_BLACK);
+    tft.setTextColor(ST77XX_MAGENTA);
+    tft.setCursor(200 + position, 9);
     tft.print("o");
   }
 }
@@ -316,37 +347,41 @@ void drawHeader(String str) {
 
 void drawHeaderRight() {
   touchToggle = !touchToggle;
+  tft.setTextColor(COLOR_HEADER_R);
+  tft.setFont();
+  tft.setCursor(205, 5);
+  tft.setTextSize(1);
+
   if (touchToggle) {
-    tft.setTextColor(COLOR_HEADER_R);
-    tft.setFont();
-    tft.setCursor(205, 5);
-    tft.setTextSize(1);
     tft.print(".oO");
   } else {
     tft.fillRect(171, 1, 68, 19, ST77XX_BLACK);
   }
 }
-
 void drawDate(String str) {
   tft.fillRect(1, 1, 170, 19, ST77XX_BLACK);
-  tft.setCursor(5, 9);
-  tft.setTextSize(1);
-  tft.setTextColor(COLOR_HEADER_L);
   tft.setFont(&FreeMono9pt7b);
+  tft.setTextColor(COLOR_HEADER_L);
+  tft.setTextSize(1);
+  tft.setCursor(5, 15);
   tft.print(str);
   str.clear();
 }
+
 void drawColon() {
   blinkColon = !blinkColon;
   tft.setFont(&FreeMonoBold24pt7b);
   tft.setCursor(63, 60);
+
   if (blinkColon) {
     tft.setTextColor(ST77XX_BLACK);
   } else {
     tft.setTextColor(COLOR_CLOCK);
   }
+
   tft.print(":");
 }
+
 void drawClock(bool isWriteAll) {
   tft.setFont(&FreeMono9pt7b);
   tft.setTextSize(1);
@@ -372,26 +407,32 @@ void drawClock(bool isWriteAll) {
   if (seconds >= 60) {
     seconds = 0;
     minutes++;
+
     if (minutes >= 60) {
       minutes = 0;
       hours++;
+
       if (hours >= 24) {
         hours = 0;
       }
+
       tft.setCursor(8, 64);
       tft.fillRect(8, 21, 55, 59, ST77XX_BLACK);  // clear hours
       tft.setFont(&FreeMonoBold24pt7b);
       tft.setTextColor(COLOR_CLOCK);
       tft.print(formatNumber(hours));
+
       // Update clock after 1 hours
       updateClock();
     }
+
     tft.setCursor(91, 64);
     tft.fillRect(91, 21, 55, 59, ST77XX_BLACK);  // clear minutes
     tft.setFont(&FreeMonoBold24pt7b);
     tft.setTextColor(COLOR_CLOCK);
     tft.print(formatNumber(minutes));
   }
+
   seconds++;
 }
 
@@ -414,8 +455,8 @@ void drawTemHum() {
   tft.print(str);
   str.clear();
 }
+
 void drawWeather(String status) {
-  // tft.drawRGBBitmap(180, 30, (const uint16_t *)data, 48, 48);
   tft.fillRect(171, 21, 68, 89, ST77XX_BLACK);
   tft.setFont();
   tft.setCursor(185, 95);
@@ -448,13 +489,6 @@ void drawMessage() {
 }
 
 void drawFooter() {
-  // uint8_t lenF = footer.length();
-  // if (position >= lenF) {
-  //   position = 0;
-  // }
-  // String newFooter = footer.substring(position, lenF);
-  // position++;
-  // Clear border => 239, keep border 238
   tft.fillRect(1, 211, 238, 28, ST77XX_BLACK);
   tft.setFont(&FreeMono9pt7b);
   tft.setTextSize(1);
@@ -464,6 +498,7 @@ void drawFooter() {
   tft.print(strFooter);
   strFooter.clear();
 }
+
 void clearScreen() {
   // fill header left
   tft.fillRect(1, 1, 170, 19, ST77XX_BLACK);
@@ -499,88 +534,4 @@ void drawBattery() {
 }
 
 void drawface() {
-
-  // Draw text
-  // const char *text_day = "Mon, 25 SEP 2023";
-  // tft.setCursor(5, 7);
-  // tft.setTextColor(ST77XX_BLUE);
-  // tft.setTextWrap(false);
-  // tft.setFont(&FreeMono9pt7b);
-  // tft.setTextSize(1);
-  // tft.print(text_day);
-  // Draw time
-  // const char *text_time = "20:55";
-  // // Set text align = center
-  // tft.setCursor(16, 64);
-  // tft.setFont(&FreeMonoBold24pt7b);
-  // tft.setTextColor(ST77XX_RED);
-  // tft.setTextWrap(false);
-  // tft.print(text_time);
-  // Draw temp and hum
-  // tft.setFont();
-  // tft.setCursor(15, 88);
-  // tft.setTextColor(ST77XX_GREEN);
-  // tft.setTextSize(2);
-  // tft.print("BN-25");
-  // tft.setCursor(tft.getCursorX(), 88 - 2);
-  // tft.setTextSize(1);
-  // tft.print("o");
-  // tft.setCursor(tft.getCursorX(), 88);
-  // tft.setTextSize(2);
-  // tft.print("C|");
-  // tft.print("98%");
-
-  // showWeather();
-  // tft.setCursor(80, 83);
-  // tft.setTextColor(ST77XX_GREEN);
-  // tft.setTextSize(2);
-  // tft.print("25");
-  // tft.setCursor(tft.getCursorX(), 83 - 2);
-  // tft.setTextSize(1);
-  // tft.print("o");
-  // tft.setCursor(tft.getCursorX(), 83);
-  // tft.setTextSize(2);
-  // tft.print("C|");
-  // tft.print("80%");
-  // Draw line
-  // tft.drawLine(0, 105, 240, 105, ST77XX_BLUE);
-
-  // Draw smarthome device
-  // const char *text_device = "Light ON: 6, Device ON: 10";
-  // tft.setCursor(5, 120 + 5);
-  // tft.setFont(&FreeMono9pt7b);
-  // tft.setTextSize(1);
-  // tft.setTextColor(ST77XX_YELLOW);
-  // tft.setTextWrap(true);
-  // tft.print(text_device);
-
-  // Draw message
-  // const char *text_msg = "The door is opening...";
-  // tft.setCursor(0, 160);
-  // tft.setTextSize(1);
-  // tft.setTextColor(ST77XX_RED);
-  // tft.setTextWrap(true);
-  // tft.print(wifiStatus);
-
-  // Draw line
-  // tft.drawLine(0, 200, 240, 200, ST77XX_BLUE);
-  // Draw TH
-  // const char *text_tem = "16";
-  // const char *text_hum = "89";
-  // tft.setCursor(5, 200 + 6);
-  // tft.setTextSize(2);
-  // tft.setTextColor(ST77XX_ORANGE);
-  // tft.print(text_tem);
-  // tft.print("\xF7");
-  // tft.print("C");
-  // tft.setCursor(tft.getCursorX(), 200 + 20 - 2);
-  // tft.setTextSize(1);
-  // tft.print("o");
-  // tft.setCursor(tft.getCursorX(), 200 + 20);
-  // tft.setTextSize(2);
-  // tft.print("C");
-  // tft.print("  ");
-  // tft.print(text_hum);
-  // tft.print("%");
-  // Draw temp and hum
 }
