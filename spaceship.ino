@@ -163,14 +163,16 @@ void callback(char *topic, byte *payload, unsigned int length) {
   } else if (weather == "cloudy" || weather == "partlycloudy") {
     newWeather = "Cloudy";
     weatherImage = (const uint16_t *)cloudy;
-  } else if (weather == "sunny") {
-    newWeather = "Sunny";
-    weatherImage = (const uint16_t *)sunny;
   } else if (weather == "lightning") {
     newWeather = "Lightning";
     weatherImage = (const uint16_t *)lightning;
+  // } else if (weather == "sunny") {
+  //   newWeather = "Sunny";
+  //   weatherImage = (const uint16_t *)sunny;
   } else {
-    // TODO:
+    // set default to weather
+    newWeather = "Sunny";
+    weatherImage = (const uint16_t *)sunny;
   }
 
   drawBattery();
@@ -317,7 +319,7 @@ void drawConnectStatus() {
   if (position > 29) {
     step = -6;
   }
-  if (position < 0) {
+  if (position < 1) {
     step = 6;
   }
   if (!isWifiConnected) {
@@ -444,14 +446,14 @@ void drawTemHum() {
   tft.setFont();
   tft.setTextColor(COLOR_TEMP);
   tft.setTextSize(2);
-  tft.setCursor(5, 88);
+  tft.setCursor(30, 88);
   tft.print(temperatureExternal);
   tft.setTextSize(1);
   tft.setCursor(tft.getCursorX(), 86);
   tft.print("o");
   tft.setCursor(tft.getCursorX(), 88);
   tft.setTextSize(2);
-  String str = "C " + String(humidityExternal) + "% ";
+  String str = "C | " + String(humidityExternal) + "% ";
   tft.print(str);
   str.clear();
 }
